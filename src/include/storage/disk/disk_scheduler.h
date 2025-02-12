@@ -102,6 +102,8 @@ class DiskScheduler {
    */
   void DeallocatePage(page_id_t page_id) { disk_manager_->DeletePage(page_id); }
 
+  void NewThread();
+
  private:
   /** Pointer to the disk manager. */
   DiskManager *disk_manager_ __attribute__((__unused__));
@@ -110,5 +112,19 @@ class DiskScheduler {
   Channel<std::optional<DiskRequest>> request_queue_;
   /** The background thread responsible for issuing scheduled requests to the disk manager. */
   std::optional<std::thread> background_thread_;
+
+  // need to keep track of threads so we can join them
+  std::vector<std::thread> workers_;
+  // the task queue
+  std::queue<std::function<void()>> tasks_;
+  // num_threads
+  size_t min_threads_{1};
+  size_t max_threads_{16};
+  size_t thread_condition_{1};
+
+  // synchronization、
+  std::mutex queue_mutex_;
+  std::condition_variable condition_;
+  bool stop_{false};
 };
 }  // namespace bustub
