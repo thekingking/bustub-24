@@ -72,6 +72,8 @@ class FrameHeader {
   /** @brief The frame ID / index of the frame this header represents. */
   const frame_id_t frame_id_;
 
+  page_id_t page_id_ = INVALID_PAGE_ID;
+
   /** @brief The readers / writer latch for this frame. */
   std::shared_mutex rwlatch_;
 
@@ -138,6 +140,8 @@ class BufferPoolManager {
    * TODO(P1) We recommend replacing this comment with details about what this latch actually protects.
    */
   std::shared_ptr<std::mutex> bpm_latch_;
+  // pages_ is protected by page_mutexes_mutex_
+  std::vector<std::mutex> page_mutexes_;
 
   /** @brief The frame headers of the frames that this buffer pool manages. */
   std::vector<std::shared_ptr<FrameHeader>> frames_;
@@ -170,5 +174,6 @@ class BufferPoolManager {
    * stored inside of it. Additionally, you may also want to implement a helper function that returns either a shared
    * pointer to a `FrameHeader` that already has a page's data stored inside of it, or an index to said `FrameHeader`.
    */
+  auto FetchPage(page_id_t page_id, AccessType access_type = AccessType::Unknown) -> std::shared_ptr<FrameHeader>;
 };
 }  // namespace bustub

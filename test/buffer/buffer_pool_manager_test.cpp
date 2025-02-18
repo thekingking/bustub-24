@@ -15,6 +15,7 @@
 #include <filesystem>
 
 #include "buffer/buffer_pool_manager.h"
+#include "fmt/core.h"
 #include "gtest/gtest.h"
 #include "storage/page/page_guard.h"
 

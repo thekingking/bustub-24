@@ -27,6 +27,7 @@ namespace bustub {
 enum class AccessType { Unknown = 0, Lookup, Scan, Index };
 
 class LRUKNode {
+  friend class BufferPoolManager;
   friend class LRUKReplacer;
 
  private:
@@ -49,6 +50,8 @@ class LRUKNode {
  * classical LRU algorithm is used to choose victim.
  */
 class LRUKReplacer {
+  friend class BufferPoolManager;
+
  public:
   /**
    *
