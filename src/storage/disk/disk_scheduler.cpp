@@ -20,7 +20,7 @@ DiskScheduler::DiskScheduler(DiskManager *disk_manager) : disk_manager_(disk_man
   // TODO(P1): remove this line after you have implemented the disk scheduler API
   // Spawn the background thread
   for (size_t i = 0; i < min_threads_; i++) {
-    workers_.emplace_back(&DiskScheduler::NewThread, this);
+    workers_.emplace_back(&DiskScheduler::StartWorkerThread, this);
   }
 }
 
@@ -37,26 +37,6 @@ DiskScheduler::~DiskScheduler() {
   // 等待所有线程结束
   for (auto &worker : workers_) {
     worker.join();
-  }
-}
-
-void DiskScheduler::NewThread() {
-  while (true) {
-    std::function<void()> task;
-    {
-      std::unique_lock<std::mutex> lock(queue_mutex_);
-      // 等待任务队列不为空或者stop_为true
-      condition_.wait(lock, [this] { return !tasks_.empty() || stop_; });
-      // 如果stop_为true，退出线程
-      if (stop_ && tasks_.empty()) {
-        return;
-      }
-      // 取出任务
-      task = std::move(tasks_.front());
-      tasks_.pop();
-    }
-    // 执行任务
-    task();
   }
 }
 
@@ -79,12 +59,30 @@ void DiskScheduler::Schedule(DiskRequest r) {
       request->callback_.set_value(true);
     });
     if (workers_.size() < max_threads_ && tasks_.size() > thread_condition_) {
-      workers_.emplace_back(&DiskScheduler::NewThread, this);
+      workers_.emplace_back(&DiskScheduler::StartWorkerThread, this);
     }
   }
   condition_.notify_one();
 }
 
-void DiskScheduler::StartWorkerThread() {}
+void DiskScheduler::StartWorkerThread() {
+  while (true) {
+    std::function<void()> task;
+    {
+      std::unique_lock<std::mutex> lock(queue_mutex_);
+      // 等待任务队列不为空或者stop_为true
+      condition_.wait(lock, [this] { return !tasks_.empty() || stop_; });
+      // 如果stop_为true，退出线程
+      if (stop_ && tasks_.empty()) {
+        return;
+      }
+      // 取出任务
+      task = std::move(tasks_.front());
+      tasks_.pop();
+    }
+    // 执行任务
+    task();
+  }
+}
 
 }  // namespace bustub

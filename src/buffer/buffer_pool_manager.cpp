@@ -1,3 +1,4 @@
+
 //===----------------------------------------------------------------------===//
 //
 //                         BusTub
@@ -11,10 +12,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "buffer/buffer_pool_manager.h"
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <shared_mutex>
 #include "common/config.h"
 #include "fmt/core.h"
 
@@ -77,6 +78,8 @@ BufferPoolManager::BufferPoolManager(size_t num_frames, DiskManager *disk_manage
     : num_frames_(num_frames),
       next_page_id_(0),
       bpm_latch_(std::make_shared<std::mutex>()),
+      frame_mutexes_(num_frames),
+      page_mutexes_(6400),
       replacer_(std::make_shared<LRUKReplacer>(num_frames, k_dist)),
       disk_scheduler_(std::make_unique<DiskScheduler>(disk_manager)),
       log_manager_(log_manager) {
@@ -129,10 +132,8 @@ auto BufferPoolManager::Size() const -> size_t { return num_frames_; }
  * @return The page ID of the newly allocated page.
  */
 auto BufferPoolManager::NewPage() -> page_id_t {
-  std::unique_lock<std::mutex> latch_lock(*bpm_latch_);
   // 为新的page分配page_id
-  ++next_page_id_;
-  page_id_t page_id = next_page_id_;
+  page_id_t page_id = next_page_id_++;
   // 增加disk空间
   disk_scheduler_->IncreaseDiskSpace(page_id + 1);
   return page_id;
@@ -168,23 +169,25 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
   // 加锁
   std::unique_lock<std::mutex> latch_lock(*bpm_latch_);
   // 如果page_id无效，或者page不在buffer pool中，返回true
-  if (page_id == INVALID_PAGE_ID || page_table_.find(page_id) == page_table_.end()) {
+  if (page_table_.find(page_id) == page_table_.end()) {
     return true;
   }
   // 获取frame_id
   frame_id_t frame_id = page_table_[page_id];
 
-  // std::lock_guard<std::mutex> page_mutex(page_mutexes_[frame_id]);
+  std::lock_guard<std::mutex> page_mutex(frame_mutexes_[frame_id]);
   // 如果page是pinned，返回false
   if (frames_[frame_id]->pin_count_ > 0) {
     return false;
   }
 
-  // 删除page_table_中的page_id映射
+  replacer_->Remove(frame_id);
   page_table_.erase(page_id);
-  // 将frame_id加入free_list
   free_frames_.push_back(frame_id);
-  // latch_lock.unlock();
+
+  // 获取page的锁
+  page_mutexes_[page_id % 6400].lock();
+  latch_lock.unlock();
 
   // 如果page是脏页，将page写回disk
   if (frames_[frame_id]->is_dirty_) {
@@ -193,11 +196,11 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
     disk_scheduler_->Schedule({true, frames_[frame_id]->GetDataMut(), page_id, std::move(promise)});
     future.get();
   }
+  page_mutexes_[page_id % 6400].unlock();
+
   // 重置page元数据
   frames_[frame_id]->Reset();
   frames_[frame_id]->page_id_ = INVALID_PAGE_ID;
-  // remove the frame from the replacer
-  replacer_->Remove(frame_id);
   disk_scheduler_->DeallocatePage(page_id);
   return true;
 }
@@ -215,51 +218,63 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
     // 更新访问历史
     replacer_->RecordAccess(frame_id, access_type);
     replacer_->SetEvictable(frame_id, false);
-    ++frames_[frame_id]->pin_count_;
     // 加锁
-    // std::lock_guard<std::mutex> page_mutex(page_mutexes_[frame_id]);
+    std::lock_guard<std::mutex> page_mutex(frame_mutexes_[frame_id]);
+    ++frames_[frame_id]->pin_count_;
+
     return frames_[frame_id];
   }
-  frame_id_t frame_id = INVALID_FRAME_ID;
+
   // 如果free_list为空，则从replacer中evict一个frame
+  frame_id_t frame_id = INVALID_FRAME_ID;
   if (free_frames_.empty()) {
     auto evict_frame = replacer_->Evict();
     if (!evict_frame.has_value()) {
       return nullptr;
     }
     frame_id = evict_frame.value();
-    // 更新page_table_
-    page_table_.erase(frames_[frame_id]->page_id_);
   } else {
     // 从free_list中取出一个frame_id
     frame_id = free_frames_.back();
     free_frames_.pop_back();
   }
+  replacer_->RecordAccess(frame_id, access_type);
+  replacer_->SetEvictable(frame_id, false);
+
   // 更新page_table_
-  page_table_[page_id] = frame_id;
-  // std::lock_guard<std::mutex> page_mutex(page_mutexes_[frame_id]);
-  // latch_lock.unlock();
+
+  page_table_.erase(frames_[frame_id]->page_id_);
+  page_table_.emplace(page_id, frame_id);
+
+  // 获取page的锁
+  page_id_t old_page_id = frames_[frame_id]->page_id_;
+  page_mutexes_[old_page_id % 6400].lock();
+  page_mutexes_[page_id % 6400].lock();
+  std::lock_guard<std::mutex> page_mutex(frame_mutexes_[frame_id]);
+  latch_lock.unlock();
 
   // 如果page是脏页，将page写回disk
   if (frames_[frame_id]->is_dirty_) {
     auto promise = disk_scheduler_->CreatePromise();
-    auto future = promise.get_future();
-    disk_scheduler_->Schedule({true, frames_[frame_id]->GetDataMut(), frames_[frame_id]->page_id_, std::move(promise)});
-    future.get();
+    auto write_future = promise.get_future();
+    disk_scheduler_->Schedule({true, frames_[frame_id]->GetDataMut(), old_page_id, std::move(promise)});
+    write_future.get();
   }
+  page_mutexes_[old_page_id % 6400].unlock();
+
   // 初始化page
-  frames_[frame_id]->page_id_ = page_id;
   frames_[frame_id]->Reset();
+  frames_[frame_id]->page_id_ = page_id;
+  ++frames_[frame_id]->pin_count_;
+
   // 从disk中读取page到buffer pool中
   auto read_promise = disk_scheduler_->CreatePromise();
   auto read_future = read_promise.get_future();
-  disk_scheduler_->Schedule({false, frames_[frame_id]->GetDataMut(), page_id, std::move(read_promise)});
+  disk_scheduler_->Schedule(
+      {false, frames_[frame_id]->GetDataMut(), frames_[frame_id]->page_id_, std::move(read_promise)});
   read_future.get();
+  page_mutexes_[page_id % 6400].unlock();
 
-  // 更新replacer_
-  ++frames_[frame_id]->pin_count_;
-  replacer_->RecordAccess(frame_id, access_type);
-  replacer_->SetEvictable(frame_id, false);
   return frames_[frame_id];
 }
 
@@ -416,14 +431,17 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
 
   // 获取frame_id
   frame_id_t frame_id = page_table_[page_id];
+  std::lock_guard<std::mutex> page_mutex(frame_mutexes_[frame_id]);
+  page_mutexes_[page_id % 6400].lock();
+  latch_lock.unlock();
 
-  // std::lock_guard<std::mutex> page_mutex(page_mutexes_[frame_id]);
-  // latch_lock.unlock();
   // 将page写回disk
   auto promise = disk_scheduler_->CreatePromise();
-  auto future = promise.get_future();
+  auto write_future = promise.get_future();
   disk_scheduler_->Schedule({true, frames_[frame_id]->GetDataMut(), page_id, std::move(promise)});
-  future.get();
+  write_future.get();
+  page_mutexes_[page_id % 6400].unlock();
+
   // 重置page的dirty标志
   frames_[frame_id]->is_dirty_ = false;
 
@@ -443,19 +461,20 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
 void BufferPoolManager::FlushAllPages() {
   for (size_t i = 0; i < num_frames_; ++i) {
     // 加锁
-    // std::lock_guard<std::mutex> page_mutex(page_mutexes_[i]);
-    // 获取page_id
-    page_id_t page_id = frames_[i]->page_id_;
+    std::lock_guard<std::mutex> page_mutex(frame_mutexes_[i]);
+    page_mutexes_[frames_[i]->page_id_ % 6400].lock();
+
     // 如果page有效，且dirty，将page写回disk
-    if (page_id != INVALID_PAGE_ID) {
-      // 将page写回disk
+    if (frames_[i]->page_id_ != INVALID_PAGE_ID) {
       auto promise = disk_scheduler_->CreatePromise();
-      auto future = promise.get_future();
-      disk_scheduler_->Schedule({true, frames_[i]->GetDataMut(), page_id, std::move(promise)});
-      future.get();
-      // 重置page的dirty标志
-      frames_[i]->is_dirty_ = false;
+      auto write_future = promise.get_future();
+      disk_scheduler_->Schedule({true, frames_[i]->GetDataMut(), frames_[i]->page_id_, std::move(promise)});
+      write_future.get();
     }
+    page_mutexes_[frames_[i]->page_id_ % 6400].unlock();
+
+    // 重置page的dirty标志
+    frames_[i]->is_dirty_ = false;
   }
 }
 
@@ -488,6 +507,7 @@ auto BufferPoolManager::GetPinCount(page_id_t page_id) -> std::optional<size_t> 
   std::unique_lock<std::mutex> latch_lock(*bpm_latch_);
   if (page_table_.find(page_id) != page_table_.end()) {
     frame_id_t frame_id = page_table_[page_id];
+    std::lock_guard<std::mutex> page_mutex(frame_mutexes_[frame_id]);
     return frames_[frame_id]->pin_count_.load();
   }
   return std::nullopt;

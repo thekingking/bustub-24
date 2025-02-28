@@ -110,6 +110,9 @@ class FrameHeader {
  * to have completed the implementation of both the `LRUKReplacer` and `DiskManager` classes.
  */
 class BufferPoolManager {
+  friend class ReadPageGuard;
+  friend class WritePageGuard;
+
  public:
   BufferPoolManager(size_t num_frames, DiskManager *disk_manager, size_t k_dist = LRUK_REPLACER_K,
                     LogManager *log_manager = nullptr);
@@ -140,7 +143,9 @@ class BufferPoolManager {
    * TODO(P1) We recommend replacing this comment with details about what this latch actually protects.
    */
   std::shared_ptr<std::mutex> bpm_latch_;
-  // pages_ is protected by page_mutexes_mutex_
+  // pages_ is protected by frames_
+  std::vector<std::mutex> frame_mutexes_;
+  /* page_mutexes_mutex_ is used to protect the page_ */
   std::vector<std::mutex> page_mutexes_;
 
   /** @brief The frame headers of the frames that this buffer pool manages. */
