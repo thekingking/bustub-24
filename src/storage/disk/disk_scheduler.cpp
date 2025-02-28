@@ -19,13 +19,12 @@ namespace bustub {
 DiskScheduler::DiskScheduler(DiskManager *disk_manager) : disk_manager_(disk_manager) {
   // TODO(P1): remove this line after you have implemented the disk scheduler API
   // Spawn the background thread
-  for (size_t i = 0; i < min_threads_; i++) {
+  for (size_t i = 0; i < num_thread_; i++) {
     workers_.emplace_back(&DiskScheduler::StartWorkerThread, this);
   }
 }
 
 DiskScheduler::~DiskScheduler() {
-  // Put a `std::nullopt` in the queue to signal to exit the loop
   {
     // 加锁
     std::unique_lock<std::mutex> lock(queue_mutex_);
@@ -58,9 +57,6 @@ void DiskScheduler::Schedule(DiskRequest r) {
       // Signal the issuer that the request has been completed
       request->callback_.set_value(true);
     });
-    if (workers_.size() < max_threads_ && tasks_.size() > thread_condition_) {
-      workers_.emplace_back(&DiskScheduler::StartWorkerThread, this);
-    }
   }
   condition_.notify_one();
 }
