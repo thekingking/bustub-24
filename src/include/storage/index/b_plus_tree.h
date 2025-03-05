@@ -50,6 +50,9 @@ class Context {
   // Store the write guards of the pages that you're modifying here.
   std::deque<WritePageGuard> write_set_;
 
+  // Store the index of the pages that you're accessing here.
+  std::deque<int> index_set_;
+
   // You may want to use this when getting value, but not necessary.
   std::deque<ReadPageGuard> read_set_;
 
@@ -80,6 +83,8 @@ class BPlusTree {
 
   // Return the value associated with a given key
   auto GetValue(const KeyType &key, std::vector<ValueType> *result) -> bool;
+
+  // auto GetLeaf(const KeyType &key) -> page_id_t;
 
   // Return the page id of the root node
   auto GetRootPageId() -> page_id_t;

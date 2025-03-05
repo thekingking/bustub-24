@@ -13,6 +13,7 @@
 #include <queue>
 #include <string>
 
+#include "common/config.h"
 #include "storage/page/b_plus_tree_page.h"
 
 namespace bustub {
@@ -77,7 +78,21 @@ class BPlusTreeInternalPage : public BPlusTreePage {
    * @param index The index to search for
    * @return The value at the index
    */
-  auto ValueAt(int index) const -> ValueType;
+  auto ValueAt(int index) const -> page_id_t;
+
+  /**
+   * @param index The index to set
+   * @param value The value to set
+   */
+  void SetValueAt(int index, const page_id_t &value);
+
+  /**
+   * @param index The index to insert at
+   * @param key The key to insert
+   * @param value The value to insert
+   * @return
+   */
+  void Insert(int index, const KeyType &key, const page_id_t &value);
 
   /**
    * @brief For test only, return a string representing all keys in
@@ -108,7 +123,7 @@ class BPlusTreeInternalPage : public BPlusTreePage {
  private:
   // Array members for page data.
   KeyType key_array_[INTERNAL_PAGE_SLOT_CNT];
-  ValueType page_id_array_[INTERNAL_PAGE_SLOT_CNT];
+  page_id_t page_id_array_[INTERNAL_PAGE_SLOT_CNT];
   // (Fall 2024) Feel free to add more fields and helper functions below if needed
 };
 
