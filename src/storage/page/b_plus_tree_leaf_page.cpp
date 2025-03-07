@@ -73,6 +73,15 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(int index, const KeyType &key, const Val
   ChangeSizeBy(1);
 }
 
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(int index) {
+  for (int i = index; i < GetSize() - 1; ++i) {
+    SetKeyAt(i, KeyAt(i + 1));
+    SetValueAt(i, ValueAt(i + 1));
+  }
+  ChangeSizeBy(-1);
+}
+
 template class BPlusTreeLeafPage<GenericKey<4>, RID, GenericComparator<4>>;
 template class BPlusTreeLeafPage<GenericKey<8>, RID, GenericComparator<8>>;
 template class BPlusTreeLeafPage<GenericKey<16>, RID, GenericComparator<16>>;

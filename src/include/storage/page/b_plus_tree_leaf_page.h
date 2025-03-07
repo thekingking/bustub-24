@@ -68,6 +68,7 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto ValueAt(int index) const -> ValueType;
   void SetValueAt(int index, const ValueType &value);
   void Insert(int index, const KeyType &key, const ValueType &value);
+  void Remove(int index);
 
   /**
    * @brief For test only return a string representing all keys in
