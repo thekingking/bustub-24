@@ -14,22 +14,11 @@ namespace bustub {
  * set your own input parameters
  */
 INDEX_TEMPLATE_ARGUMENTS
-INDEXITERATOR_TYPE::~IndexIterator() {
-  if (mutex_ != nullptr) {
-    mutex_->unlock_shared();
-  }
-};  // NOLINT
-
-INDEX_TEMPLATE_ARGUMENTS
 INDEXITERATOR_TYPE::IndexIterator() = default;
 
 INDEX_TEMPLATE_ARGUMENTS
-INDEXITERATOR_TYPE::IndexIterator(page_id_t page_id, int index, BufferPoolManager *bpm, std::shared_ptr<std::shared_mutex> mutex)
-    : page_id_(page_id), index_(index), bpm_(bpm), mutex_(mutex) {
-  if (mutex_ != nullptr) {
-    mutex_->lock_shared();
-  }
-}
+INDEXITERATOR_TYPE::IndexIterator(page_id_t page_id, int index, BufferPoolManager *bpm)
+    : page_id_(page_id), index_(index), bpm_(bpm) {}
 
 INDEX_TEMPLATE_ARGUMENTS
 auto INDEXITERATOR_TYPE::IsEnd() -> bool { return page_id_ == INVALID_PAGE_ID; }

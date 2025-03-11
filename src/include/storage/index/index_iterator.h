@@ -29,8 +29,8 @@ class IndexIterator {
  public:
   // you may define your own constructor based on your member variables
   IndexIterator();
-  IndexIterator(page_id_t page_id, int index, BufferPoolManager *bpm, std::shared_ptr<std::shared_mutex> mutex);
-  ~IndexIterator();  
+  IndexIterator(page_id_t page_id, int index, BufferPoolManager *bpm);
+  ~IndexIterator() = default;
 
   auto IsEnd() -> bool;
 
@@ -47,7 +47,6 @@ class IndexIterator {
   page_id_t page_id_{INVALID_PAGE_ID};
   int index_{0};
   BufferPoolManager *bpm_{nullptr};
-  std::shared_ptr<std::shared_mutex> mutex_{nullptr};
 };
 
 }  // namespace bustub

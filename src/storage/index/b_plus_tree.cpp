@@ -1,4 +1,5 @@
 #include "storage/index/b_plus_tree.h"
+#include <cstdio>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
@@ -96,14 +97,12 @@ auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool {
   std::unique_lock<std::shared_mutex> lock(*rwlatch_);
-  // fmt::println(stderr, "Insert key: {}, value: {}", key.ToString(), value.ToString());
-  // Declaration of context instance.
   Context ctx;
   WritePageGuard header_guard = bpm_->WritePage(header_page_id_);
   auto header_page = header_guard.AsMut<BPlusTreeHeaderPage>();
   auto root_page_id = header_page->root_page_id_;
 
-  // Case1: If the tree is empty, create a new tree.
+  /* Case1: If the tree is empty, create a new tree. */
   if (root_page_id == INVALID_PAGE_ID) {
     // Create a new leaf page as the root page.
     auto leaf_page_id = bpm_->NewPage();
@@ -117,7 +116,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     return true;
   }
 
-  // Case2: If the tree is not empty, insert into the leaf page.
+  /* Case2: If the tree is not empty, search the leaf page */
 
   // Find the leaf page.
   auto page_id = root_page_id;
@@ -127,7 +126,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     // Get the internal page.
     auto internal_page = write_guard.AsMut<InternalPage>();
 
-    // Find the index to insert the key.
+    // update the first key in the internal page (only the key in the leftmost page will be updated) )
     auto index = 0;
     if (comparator_(key, internal_page->KeyAt(0)) < 0) {
       internal_page->SetKeyAt(0, key);
@@ -143,7 +142,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
       }
     }
 
-    // Get the child page.
+    // Save the search path and insert the internal pageguard into write_set
     page_id = internal_page->ValueAt(index - 1);
     ctx.write_set_.push_back(std::move(write_guard));
     ctx.index_set_.push_back(index - 1);
@@ -151,7 +150,8 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     page = write_guard.AsMut<BPlusTreePage>();
   }
 
-  // Get the leaf page.
+  // the last write_guard is the leaf_page_guard
+  // search the key in the leaf page
   auto leaf_page = write_guard.AsMut<LeafPage>();
   auto index = 0;
   while (index < leaf_page->GetSize() && comparator_(key, leaf_page->KeyAt(index)) > 0) {
@@ -166,12 +166,12 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   // Insert the key-value pair.
   leaf_page->Insert(index, key, value);
 
-  // Case2.2: If the key does not exist and the leaf page has enough space
+  // Case2.2: Insert successfully and the leaf page has enough space, return immediately.
   if (leaf_page->GetSize() <= leaf_page->GetMaxSize()) {
     return true;
   }
 
-  // Case2.3: If the key does not exist and the leaf page does not have enough space, split the leaf page.
+  // Case2.3: Insert successfully but the leaf page does not have enough space, split the leaf page.
   auto new_leaf_page_id = bpm_->NewPage();
   auto new_leaf_guard = bpm_->WritePage(new_leaf_page_id);
   auto new_leaf_page = new_leaf_guard.AsMut<LeafPage>();
@@ -186,11 +186,13 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   new_leaf_page->SetNextPageId(leaf_page->GetNextPageId());
   leaf_page->SetNextPageId(new_leaf_page_id);
 
+  // save the left_key and right_key, which will be used to update the parent page key
   auto left_key = leaf_page->KeyAt(0);
   auto left_page_id = page_id;
   auto right_key = new_leaf_page->KeyAt(0);
   auto right_page_id = new_leaf_page_id;
   while (!ctx.write_set_.empty()) {
+    // Get the parent page and the index to insert the key.
     auto internal_guard = std::move(ctx.write_set_.back());
     auto internal_page = internal_guard.AsMut<InternalPage>();
     ctx.write_set_.pop_back();
@@ -198,6 +200,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     ctx.index_set_.pop_back();
     internal_page->Insert(index + 1, right_key, right_page_id);
 
+    // Case2.4: If the internal page has enough space, return immediately.
     if (internal_page->GetSize() <= internal_page->GetMaxSize()) {
       return true;
     }
@@ -214,14 +217,14 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     }
     internal_page->SetSize(mid);
 
-    // Update the child page id.
+    // Update the left_key and right_key.
     left_key = internal_page->KeyAt(0);
     left_page_id = internal_guard.GetPageId();
     right_key = new_internal_page->KeyAt(0);
     right_page_id = new_internal_page_id;
   }
 
-  // Create a new root page.
+  // Case2.5: the root page is full, need to split the root page and update the headerpage
   root_page_id = bpm_->NewPage();
   auto internal_guard = bpm_->WritePage(root_page_id);
   auto internal_page = internal_guard.AsMut<InternalPage>();
@@ -287,7 +290,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   }
 
   // Case2.1: If the key does not exist, return immediately.
-  if (index == leaf_page->GetSize()) {
+  if (index == leaf_page->GetSize() || comparator_(key, leaf_page->KeyAt(index)) != 0) {
     return;
   }
 
@@ -486,7 +489,7 @@ auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
     read_guard = bpm_->ReadPage(page_id);
     page = read_guard.As<BPlusTreePage>();
   }
-  return INDEXITERATOR_TYPE(page_id, 0, bpm_, rwlatch_);
+  return INDEXITERATOR_TYPE(page_id, 0, bpm_);
 }
 
 /*
@@ -520,7 +523,7 @@ auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
   if (index == leaf_page->GetSize()) {
     return End();
   }
-  return INDEXITERATOR_TYPE(page_id, index, bpm_, rwlatch_);
+  return INDEXITERATOR_TYPE(page_id, index, bpm_);
 }
 
 /*
