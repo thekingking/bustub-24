@@ -23,8 +23,7 @@ BPLUSTREE_TYPE::BPlusTree(std::string name, page_id_t header_page_id, BufferPool
       comparator_(std::move(comparator)),
       leaf_max_size_(leaf_max_size),
       internal_max_size_(internal_max_size),
-      header_page_id_(header_page_id),
-      rwlatch_(std::make_shared<std::shared_mutex>()) {
+      header_page_id_(header_page_id) {
   WritePageGuard guard = bpm_->WritePage(header_page_id_);
   auto root_page = guard.AsMut<BPlusTreeHeaderPage>();
   root_page->root_page_id_ = INVALID_PAGE_ID;
@@ -50,15 +49,15 @@ auto BPLUSTREE_TYPE::IsEmpty() const -> bool {
  */
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result) -> bool {
-  std::shared_lock<std::shared_mutex> lock(*rwlatch_);
   Context ctx;
-  (void)ctx;
-  page_id_t root_page_id = GetRootPageId();
+  ReadPageGuard read_guard = bpm_->ReadPage(header_page_id_);
+  auto header_page = read_guard.As<BPlusTreeHeaderPage>();
+  auto root_page_id = header_page->root_page_id_;
   if (root_page_id == INVALID_PAGE_ID) {
     // fmt::println(stderr, "The tree is empty.");
     return false;
   }
-  ReadPageGuard read_guard = bpm_->ReadPage(root_page_id);
+  read_guard = bpm_->ReadPage(root_page_id);
   auto page = read_guard.As<BPlusTreePage>();
   while (!page->IsLeafPage()) {
     auto internal_page = read_guard.As<InternalPage>();
@@ -96,14 +95,12 @@ auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result
  */
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool {
-  std::unique_lock<std::shared_mutex> lock(*rwlatch_);
   Context ctx;
-  WritePageGuard header_guard = bpm_->WritePage(header_page_id_);
-  auto header_page = header_guard.AsMut<BPlusTreeHeaderPage>();
-  auto root_page_id = header_page->root_page_id_;
+  ctx.header_page_ = bpm_->WritePage(header_page_id_);
+  auto header_page = ctx.header_page_->AsMut<BPlusTreeHeaderPage>();
 
   /* Case1: If the tree is empty, create a new tree. */
-  if (root_page_id == INVALID_PAGE_ID) {
+  if (header_page->root_page_id_ == INVALID_PAGE_ID) {
     // Create a new leaf page as the root page.
     auto leaf_page_id = bpm_->NewPage();
     auto leaf_page_guard = bpm_->WritePage(leaf_page_id);
@@ -119,12 +116,21 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   /* Case2: If the tree is not empty, search the leaf page */
 
   // Find the leaf page.
-  auto page_id = root_page_id;
+  auto page_id = header_page->root_page_id_;
   WritePageGuard write_guard = bpm_->WritePage(page_id);
   auto page = write_guard.AsMut<BPlusTreePage>();
   while (!page->IsLeafPage()) {
     // Get the internal page.
     auto internal_page = write_guard.AsMut<InternalPage>();
+    if (internal_page->GetSize() < internal_page->GetMaxSize() && ctx.header_page_.has_value()) {
+      ctx.header_page_->Drop();
+      header_page = nullptr;
+      ctx.header_page_ = std::nullopt;
+    }
+    while (internal_page->GetSize() < internal_page->GetMaxSize() && ctx.write_set_.size() > 1) {
+      ctx.write_set_.front().Drop();
+      ctx.write_set_.pop_front();
+    }
 
     // update the first key in the internal page (only the key in the leftmost page will be updated) )
     auto index = 0;
@@ -132,13 +138,8 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
       internal_page->SetKeyAt(0, key);
       ++index;
     } else {
-      while (index < internal_page->GetSize() && comparator_(key, internal_page->KeyAt(index)) > 0) {
+      while (index < internal_page->GetSize() && comparator_(key, internal_page->KeyAt(index)) >= 0) {
         ++index;
-      }
-
-      // Case2.1: If the key already exists, return false.
-      if (index < internal_page->GetSize() && comparator_(key, internal_page->KeyAt(index)) == 0) {
-        return false;
       }
     }
 
@@ -165,7 +166,6 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
 
   // Insert the key-value pair.
   leaf_page->Insert(index, key, value);
-
   // Case2.2: Insert successfully and the leaf page has enough space, return immediately.
   if (leaf_page->GetSize() <= leaf_page->GetMaxSize()) {
     return true;
@@ -185,7 +185,6 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   // Update the next page id.
   new_leaf_page->SetNextPageId(leaf_page->GetNextPageId());
   leaf_page->SetNextPageId(new_leaf_page_id);
-
   // save the left_key and right_key, which will be used to update the parent page key
   auto left_key = leaf_page->KeyAt(0);
   auto left_page_id = page_id;
@@ -225,14 +224,13 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   }
 
   // Case2.5: the root page is full, need to split the root page and update the headerpage
-  root_page_id = bpm_->NewPage();
-  auto internal_guard = bpm_->WritePage(root_page_id);
+  auto new_root_page_id = bpm_->NewPage();
+  auto internal_guard = bpm_->WritePage(new_root_page_id);
   auto internal_page = internal_guard.AsMut<InternalPage>();
   internal_page->Init(internal_max_size_);
   internal_page->Insert(0, left_key, left_page_id);
   internal_page->Insert(1, right_key, right_page_id);
-  header_page->root_page_id_ = root_page_id;
-
+  header_page->root_page_id_ = new_root_page_id;
   return true;
 }
 
@@ -248,10 +246,9 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
  */
 INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::Remove(const KeyType &key) {
-  std::unique_lock<std::shared_mutex> lock(*rwlatch_);
   Context ctx;
-  WritePageGuard header_guard = bpm_->WritePage(header_page_id_);
-  auto header_page = header_guard.AsMut<BPlusTreeHeaderPage>();
+  ctx.header_page_ = bpm_->WritePage(header_page_id_);
+  auto header_page = ctx.header_page_->AsMut<BPlusTreeHeaderPage>();
   auto root_page_id = header_page->root_page_id_;
 
   // Case1: If the tree is empty, return immediately.
@@ -267,7 +264,15 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   while (!page->IsLeafPage()) {
     // Get the internal page.
     auto internal_page = write_guard.AsMut<InternalPage>();
-    ctx.write_set_.push_back(std::move(write_guard));
+    if (internal_page->GetSize() > internal_page->GetMinSize() && ctx.header_page_.has_value()) {
+      ctx.header_page_->Drop();
+      header_page = nullptr;
+      ctx.header_page_ = std::nullopt;
+    }
+    while (internal_page->GetSize() > internal_page->GetMinSize() && !ctx.write_set_.empty()) {
+      ctx.write_set_.front().Drop();
+      ctx.write_set_.pop_front();
+    }
 
     // Find the index to insert the key.
     auto index = 1;
@@ -276,7 +281,15 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     }
 
     // Get the child page.
+    if (index > 1) {
+      page_id_t sibling_page_id = internal_page->ValueAt(index - 2);
+      ctx.write_set_.push_back(bpm_->WritePage(sibling_page_id));
+    } else if (index < internal_page->GetSize()) {
+      page_id_t sibling_page_id = internal_page->ValueAt(index);
+      ctx.write_set_.push_back(bpm_->WritePage(sibling_page_id));
+    }
     page_id = internal_page->ValueAt(index - 1);
+    ctx.write_set_.push_back(std::move(write_guard));
     ctx.index_set_.push_back(index - 1);
     write_guard = bpm_->WritePage(page_id);
     page = write_guard.AsMut<BPlusTreePage>();
@@ -297,8 +310,6 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   // Case2.2: If the key exists, remove the key.
   // the remove key is internal key, need to update the internal key, which is not the root page
   leaf_page->Remove(index);
-  bool flag = index == 0;
-  std::optional<KeyType> new_key = std::nullopt;
 
   // Case2.3: If the leaf page has enough space, return immediately.
   if (page_id == root_page_id) {
@@ -310,20 +321,6 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   }
 
   if (leaf_page->GetSize() >= leaf_page->GetMinSize()) {
-    auto new_key = leaf_page->KeyAt(0);
-    while (flag && !ctx.write_set_.empty()) {
-      // Get the parent page.
-      auto parent_guard = std::move(ctx.write_set_.back());
-      auto parent_internal_page = parent_guard.AsMut<InternalPage>();
-      ctx.write_set_.pop_back();
-
-      // Get the index and insert the key.
-      index = ctx.index_set_.back();
-      ctx.index_set_.pop_back();
-      parent_internal_page->SetKeyAt(index, new_key);
-
-      flag = flag && index == 0;
-    }
     return;
   }
 
@@ -332,11 +329,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   ctx.write_set_.pop_back();
   index = ctx.index_set_.back();
   ctx.index_set_.pop_back();
-  if (index != 0) {
-    flag = false;
-
-    page_id_t left_page_id = internal_page->ValueAt(index - 1);
-    auto left_guard = bpm_->WritePage(left_page_id);
+  if (index > 0) {
+    auto left_guard = std::move(ctx.write_set_.back());
+    ctx.write_set_.pop_back();
     auto left_page = left_guard.AsMut<LeafPage>();
 
     // Case2.4.1: If the left page has enough space, redistribute the key.
@@ -356,9 +351,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
       internal_page->Remove(index);
       // bpm_->DeletePage(page_id);
     }
-  } else {
-    page_id_t right_page_id = internal_page->ValueAt(index + 1);
-    auto right_guard = bpm_->WritePage(right_page_id);
+  } else if (internal_page->GetSize() > 1) {
+    auto right_guard = std::move(ctx.write_set_.back());
+    ctx.write_set_.pop_back();
     auto right_page = right_guard.AsMut<LeafPage>();
 
     // Case2.4.1: If the right page has enough space, redistribute the key.
@@ -378,10 +373,6 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
       internal_page->Remove(index + 1);
       // bpm_->DeletePage(right_page_id);
     }
-    new_key = leaf_page->KeyAt(0);
-    if (flag) {
-      internal_page->SetKeyAt(0, *new_key);
-    }
   }
 
   // Case2.5: If the internal page does not have enough space, redistribute or merge the internal page.
@@ -397,11 +388,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     index = ctx.index_set_.back();
     ctx.index_set_.pop_back();
 
-    if (index != 0) {
-      flag = false;
-
-      page_id_t left_page_id = internal_page->ValueAt(index - 1);
-      auto left_guard = bpm_->WritePage(left_page_id);
+    if (index > 0) {
+      auto left_guard = std::move(ctx.write_set_.back());
+      ctx.write_set_.pop_back();
       auto left_page = left_guard.AsMut<InternalPage>();
 
       // Case2.5.1: If the left page has enough space, redistribute the key.
@@ -420,9 +409,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
         internal_page->Remove(index);
         // bpm_->DeletePage(page_id);
       }
-    } else {
-      page_id_t right_page_id = internal_page->ValueAt(index + 1);
-      auto right_guard = bpm_->WritePage(right_page_id);
+    } else if (internal_page->GetSize() > 1) {
+      auto right_guard = std::move(ctx.write_set_.back());
+      ctx.write_set_.pop_back();
       auto right_page = right_guard.AsMut<InternalPage>();
 
       // Case2.5.1: If the right page has enough space, redistribute the key.
@@ -441,29 +430,12 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
         internal_page->Remove(index + 1);
         // bpm_->DeletePage(right_page_id);
       }
-      if (flag) {
-        internal_page->SetKeyAt(0, *new_key);
-      }
     }
   }
 
   if (internal_guard.GetPageId() == root_page_id && internal_page->GetSize() == 1) {
     header_page->root_page_id_ = internal_page->ValueAt(0);
     // bpm_->DeletePage(parent_guard.GetPageId());
-  } else if (flag) {
-    while (flag && !ctx.write_set_.empty()) {
-      // Get the parent page.
-      auto parent_guard = std::move(ctx.write_set_.back());
-      auto parent_internal_page = parent_guard.AsMut<InternalPage>();
-      ctx.write_set_.pop_back();
-
-      // Get the index and insert the key.
-      index = ctx.index_set_.back();
-      ctx.index_set_.pop_back();
-      parent_internal_page->SetKeyAt(index, *new_key);
-
-      flag = flag && index == 0;
-    }
   }
 }
 

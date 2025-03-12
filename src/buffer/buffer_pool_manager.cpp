@@ -248,9 +248,11 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
 
   // 获取page的锁
   page_id_t old_page_id = frames_[frame_id]->page_id_;
-  page_mutexes_[old_page_id % 6400].lock();
+  if (old_page_id % 6400 != page_id % 6400) {
+    page_mutexes_[old_page_id % 6400].lock();
+  }
   page_mutexes_[page_id % 6400].lock();
-  std::lock_guard<std::mutex> page_mutex(frame_mutexes_[frame_id]);
+  std::lock_guard<std::mutex> frame_mutex(frame_mutexes_[frame_id]);
   latch_lock.unlock();
 
   // 如果page是脏页，将page写回disk
@@ -260,7 +262,9 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
     disk_scheduler_->Schedule({true, frames_[frame_id]->GetDataMut(), old_page_id, std::move(promise)});
     write_future.get();
   }
-  page_mutexes_[old_page_id % 6400].unlock();
+  if (old_page_id % 6400 != page_id % 6400) {
+    page_mutexes_[old_page_id % 6400].unlock();
+  }
 
   // 初始化page
   frames_[frame_id]->Reset();
