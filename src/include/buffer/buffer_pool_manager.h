@@ -145,8 +145,6 @@ class BufferPoolManager {
   std::shared_ptr<std::mutex> bpm_latch_;
   // pages_ is protected by frames_
   std::vector<std::mutex> frame_mutexes_;
-  /* page_mutexes_mutex_ is used to protect the page_ */
-  std::vector<std::mutex> page_mutexes_;
 
   /** @brief The frame headers of the frames that this buffer pool manages. */
   std::vector<std::shared_ptr<FrameHeader>> frames_;
