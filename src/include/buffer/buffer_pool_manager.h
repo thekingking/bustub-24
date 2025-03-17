@@ -17,6 +17,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "buffer/lru_k_replacer.h"
@@ -154,6 +155,11 @@ class BufferPoolManager {
 
   /** @brief The page table that keeps track of the mapping between pages and buffer pool frames. */
   std::unordered_map<page_id_t, frame_id_t> page_table_;
+
+  /** @brief A set of dirty pages that need to be flushed to disk. */
+  std::unordered_set<page_id_t> dirty_pages_;
+
+  std::condition_variable flush_cv_;
 
   /** @brief A list of free frames that do not hold any page's data. */
   std::list<frame_id_t> free_frames_;
