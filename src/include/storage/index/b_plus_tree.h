@@ -138,6 +138,10 @@ class BPlusTree {
 
   void PrintTree(page_id_t page_id, const BPlusTreePage *page);
 
+  auto InternalBinarySearch(const InternalPage *internal_page, const KeyType &key) -> int;
+
+  auto LeafBinarySearch(const LeafPage *leaf_page, const KeyType &key) -> int;
+
   /**
    * @brief Convert A B+ tree into a Printable B+ tree
    *

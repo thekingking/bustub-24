@@ -42,6 +42,36 @@ auto BPLUSTREE_TYPE::IsEmpty() const -> bool {
 /*****************************************************************************
  * SEARCH
  *****************************************************************************/
+INDEX_TEMPLATE_ARGUMENTS
+auto BPLUSTREE_TYPE::InternalBinarySearch(const InternalPage *internal_page, const KeyType &key) -> int {
+  int left = 1;
+  int right = internal_page->GetSize();
+  while (left < right) {
+    int mid = left + (right - left) / 2;
+    if (comparator_(key, internal_page->KeyAt(mid)) >= 0) {
+      left = mid + 1;
+    } else {
+      right = mid;
+    }
+  }
+  return left;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto BPLUSTREE_TYPE::LeafBinarySearch(const LeafPage *leaf_page, const KeyType &key) -> int {
+  int left = 0;
+  int right = leaf_page->GetSize();
+  while (left < right) {
+    int mid = left + (right - left) / 2;
+    if (comparator_(key, leaf_page->KeyAt(mid)) > 0) {
+      left = mid + 1;
+    } else {
+      right = mid;
+    }
+  }
+  return left;
+}
+
 /*
  * Return the only value that associated with input key
  * This method is used for point query
@@ -53,30 +83,26 @@ auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result
   ReadPageGuard read_guard = bpm_->ReadPage(header_page_id_);
   auto header_page = read_guard.As<BPlusTreeHeaderPage>();
   auto root_page_id = header_page->root_page_id_;
+
   if (root_page_id == INVALID_PAGE_ID) {
-    // fmt::println(stderr, "The tree is empty.");
     return false;
   }
+
+  // Find the leaf page.
+  header_page = nullptr;
   read_guard = bpm_->ReadPage(root_page_id);
   auto page = read_guard.As<BPlusTreePage>();
   while (!page->IsLeafPage()) {
     auto internal_page = read_guard.As<InternalPage>();
-    auto index = 1;
-    while (index < internal_page->GetSize() && comparator_(key, internal_page->KeyAt(index)) >= 0) {
-      ++index;
-    }
+    auto index = InternalBinarySearch(internal_page, key);
     root_page_id = internal_page->ValueAt(index - 1);
     read_guard = bpm_->ReadPage(root_page_id);
     page = read_guard.As<BPlusTreePage>();
   }
 
   auto leaf_page = read_guard.As<LeafPage>();
-  auto index = 0;
-  while (index < leaf_page->GetSize() && comparator_(key, leaf_page->KeyAt(index)) != 0) {
-    ++index;
-  }
-  if (index == leaf_page->GetSize()) {
-    // fmt::println(stderr, "The key does not exist.");
+  auto index = LeafBinarySearch(leaf_page, key);
+  if (index == leaf_page->GetSize() || comparator_(key, leaf_page->KeyAt(index)) != 0) {
     return false;
   }
   result->push_back(static_cast<RID>(leaf_page->ValueAt(index)));
@@ -138,9 +164,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
       internal_page->SetKeyAt(0, key);
       ++index;
     } else {
-      while (index < internal_page->GetSize() && comparator_(key, internal_page->KeyAt(index)) >= 0) {
-        ++index;
-      }
+      index = InternalBinarySearch(internal_page, key);
     }
 
     // Save the search path and insert the internal pageguard into write_set
@@ -154,10 +178,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   // the last write_guard is the leaf_page_guard
   // search the key in the leaf page
   auto leaf_page = write_guard.AsMut<LeafPage>();
-  auto index = 0;
-  while (index < leaf_page->GetSize() && comparator_(key, leaf_page->KeyAt(index)) > 0) {
-    ++index;
-  }
+  auto index = LeafBinarySearch(leaf_page, key);
 
   // Case2.1: If the key already exists, return false.
   if (index != leaf_page->GetSize() && comparator_(key, leaf_page->KeyAt(index)) == 0) {
@@ -275,10 +296,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     }
 
     // Find the index to insert the key.
-    auto index = 1;
-    while (index < internal_page->GetSize() && comparator_(key, internal_page->KeyAt(index)) >= 0) {
-      ++index;
-    }
+    auto index = InternalBinarySearch(internal_page, key);
 
     // Get the child page.
     if (index > 1) {
@@ -297,10 +315,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
 
   // Get the leaf page and search the key.
   auto leaf_page = write_guard.AsMut<LeafPage>();
-  auto index = 0;
-  while (index < leaf_page->GetSize() && comparator_(key, leaf_page->KeyAt(index)) > 0) {
-    ++index;
-  }
+  auto index = LeafBinarySearch(leaf_page, key);
 
   // Case2.1: If the key does not exist, return immediately.
   if (index == leaf_page->GetSize() || comparator_(key, leaf_page->KeyAt(index)) != 0) {

@@ -232,6 +232,7 @@ docs/gathered
 _site
 doxygen
 docs/dev
+perf*
 
 # Config files
 *.conf

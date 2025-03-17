@@ -14,6 +14,7 @@
 
 #include <list>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
 #include <vector>
@@ -76,6 +77,8 @@ class FrameHeader {
 
   /** @brief The readers / writer latch for this frame. */
   std::shared_mutex rwlatch_;
+
+  std::mutex mutex_;
 
   /** @brief The number of pins on this frame keeping the page in memory. */
   std::atomic<size_t> pin_count_;
@@ -144,7 +147,7 @@ class BufferPoolManager {
    */
   std::shared_ptr<std::mutex> bpm_latch_;
   // pages_ is protected by frames_
-  std::vector<std::mutex> frame_mutexes_;
+  // std::vector<std::mutex> frame_mutexes_;
 
   /** @brief The frame headers of the frames that this buffer pool manages. */
   std::vector<std::shared_ptr<FrameHeader>> frames_;
