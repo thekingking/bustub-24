@@ -185,6 +185,7 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
 
   // 获取page的锁
   if (frames_[frame_id]->is_dirty_) {
+    std::unique_lock<std::mutex> flush_lock(flush_mutex_);
     dirty_pages_.insert(page_id);
   }
   latch_lock.unlock();
@@ -195,7 +196,10 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
     auto future = promise.get_future();
     disk_scheduler_->Schedule({true, frames_[frame_id]->GetDataMut(), page_id, std::move(promise)});
     future.get();
-    dirty_pages_.erase(page_id);
+    {
+      std::unique_lock<std::mutex> flush_lock(flush_mutex_);
+      dirty_pages_.erase(page_id);
+    }
     flush_cv_.notify_all();
   }
 
@@ -225,8 +229,6 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, AccessType access_type) -> 
     return frames_[frame_id];
   }
 
-  flush_cv_.wait(latch_lock, [this, page_id] { return dirty_pages_.find(page_id) == dirty_pages_.end(); });
-
   // 如果free_list为空，则从replacer中evict一个frame
   frame_id_t frame_id = INVALID_FRAME_ID;
   if (free_frames_.empty()) {
@@ -250,8 +252,9 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, AccessType access_type) -> 
 
   // 获取page的锁
   page_id_t old_page_id = frames_[frame_id]->page_id_;
-  std::lock_guard<std::mutex> frame_mutex(frames_[frame_id]->mutex_);
+  std::unique_lock<std::mutex> frame_mutex(frames_[frame_id]->mutex_);
   if (frames_[frame_id]->is_dirty_) {
+    std::unique_lock<std::mutex> flush_lock(flush_mutex_);
     dirty_pages_.insert(old_page_id);
   }
   latch_lock.unlock();
@@ -262,8 +265,17 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, AccessType access_type) -> 
     auto write_future = promise.get_future();
     disk_scheduler_->Schedule({true, frames_[frame_id]->GetDataMut(), old_page_id, std::move(promise)});
     write_future.get();
-    dirty_pages_.erase(old_page_id);
+
+    {
+      std::unique_lock<std::mutex> flush_lock(flush_mutex_);
+      dirty_pages_.erase(old_page_id);
+    }
     flush_cv_.notify_all();
+  }
+
+  {
+    std::unique_lock<std::mutex> flush_lock(flush_mutex_);
+    flush_cv_.wait(flush_lock, [this, page_id] { return dirty_pages_.find(page_id) == dirty_pages_.end(); });
   }
 
   // 初始化page

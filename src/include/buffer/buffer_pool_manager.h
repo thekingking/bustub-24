@@ -159,6 +159,8 @@ class BufferPoolManager {
   /** @brief A set of dirty pages that need to be flushed to disk. */
   std::unordered_set<page_id_t> dirty_pages_;
 
+  std::mutex flush_mutex_;
+
   std::condition_variable flush_cv_;
 
   /** @brief A list of free frames that do not hold any page's data. */

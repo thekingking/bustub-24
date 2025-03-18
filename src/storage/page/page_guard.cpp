@@ -136,13 +136,17 @@ void ReadPageGuard::Drop() {
   }
   is_valid_ = false;
   page_id_ = INVALID_PAGE_ID;
+
   frame_->rwlatch_.unlock_shared();
   bpm_latch_->lock();
+  frame_->mutex_.lock();
   --frame_->pin_count_;
   if (frame_->pin_count_.load() == 0) {
     replacer_->SetEvictable(frame_->frame_id_, true);
   }
   bpm_latch_->unlock();
+  frame_->mutex_.unlock();
+
   frame_ = nullptr;
   replacer_ = nullptr;
   bpm_latch_ = nullptr;
@@ -286,13 +290,15 @@ void WritePageGuard::Drop() {
   page_id_ = INVALID_PAGE_ID;
 
   frame_->rwlatch_.unlock();
-
   bpm_latch_->lock();
+  frame_->mutex_.lock();
   --frame_->pin_count_;
   if (frame_->pin_count_.load() == 0) {
     replacer_->SetEvictable(frame_->frame_id_, true);
   }
   bpm_latch_->unlock();
+  frame_->mutex_.unlock();
+
   frame_ = nullptr;
   replacer_ = nullptr;
   bpm_latch_ = nullptr;

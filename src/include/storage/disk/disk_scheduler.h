@@ -111,9 +111,9 @@ class DiskScheduler {
   // the task queue
   std::queue<std::function<void()>> tasks_;
   // num_threads
-  // size_t min_threads_{1};
-  size_t num_thread_{16};
-  // size_t thread_condition_{1};
+  size_t min_threads_{1};
+  size_t max_threads_{16};
+  size_t thread_condition_{1};
 
   // synchronization、
   std::mutex queue_mutex_;
