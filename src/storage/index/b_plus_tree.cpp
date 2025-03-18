@@ -370,8 +370,10 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     // If the left page has enough space, redistribute the key.
     if (left_page->GetSize() + leaf_page->GetSize() > left_page->GetMaxSize()) {
       auto mid = (left_page->GetSize() + leaf_page->GetSize()) / 2;
+      leaf_page->MoveRight(left_page->GetSize() - mid);
       for (int i = 0; i < left_page->GetSize() - mid; ++i) {
-        leaf_page->Insert(i, left_page->KeyAt(mid + i), left_page->ValueAt(mid + i));
+        leaf_page->SetKeyAt(i, left_page->KeyAt(mid + i));
+        leaf_page->SetValueAt(i, left_page->ValueAt(mid + i));
       }
       left_page->SetSize(mid);
       internal_page->SetKeyAt(index, leaf_page->KeyAt(0));
@@ -392,9 +394,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     if (right_page->GetSize() + leaf_page->GetSize() > right_page->GetMaxSize()) {
       auto mid = (right_page->GetSize() + leaf_page->GetSize()) / 2;
       for (int i = 0; i < right_page->GetSize() - mid; ++i) {
-        leaf_page->Insert(leaf_page->GetSize(), right_page->KeyAt(0), right_page->ValueAt(0));
-        right_page->Remove(0);
+        leaf_page->Insert(leaf_page->GetSize(), right_page->KeyAt(i), right_page->ValueAt(i));
       }
+      right_page->MoveLeft(right_page->GetSize() - mid);
       internal_page->SetKeyAt(index + 1, right_page->KeyAt(0));
     } else {
       // If the right page does not have enough space, merge the leaf page.
@@ -427,8 +429,10 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
       // If the left page has enough space, redistribute the key.
       if (left_page->GetSize() + child_page->GetSize() > left_page->GetMaxSize()) {
         auto mid = (left_page->GetSize() + child_page->GetSize()) / 2;
+        child_page->MoveRight(left_page->GetSize() - mid);
         for (int i = 0; i < left_page->GetSize() - mid; ++i) {
-          child_page->Insert(i, left_page->KeyAt(mid + i), left_page->ValueAt(mid + i));
+          child_page->SetKeyAt(i, left_page->KeyAt(mid + i));
+          child_page->SetValueAt(i, left_page->ValueAt(mid + i));
         }
         left_page->SetSize(mid);
         internal_page->SetKeyAt(index, child_page->KeyAt(0));
@@ -448,9 +452,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
       if (right_page->GetSize() + child_page->GetSize() > child_page->GetMaxSize()) {
         auto mid = (right_page->GetSize() + child_page->GetSize()) / 2;
         for (int i = 0; i < right_page->GetSize() - mid; ++i) {
-          child_page->Insert(child_page->GetSize(), right_page->KeyAt(0), right_page->ValueAt(0));
-          right_page->Remove(0);
+          child_page->Insert(child_page->GetSize(), right_page->KeyAt(i), right_page->ValueAt(i));
         }
+        right_page->MoveLeft(right_page->GetSize() - mid);
         internal_page->SetKeyAt(index + 1, right_page->KeyAt(0));
       } else {
         // If the right page does not have enough space, merge the leaf page.

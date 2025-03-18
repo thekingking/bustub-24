@@ -73,6 +73,24 @@ void B_PLUS_TREE_INTERNAL_PAGE_TYPE::Remove(int index) {
   ChangeSizeBy(-1);
 }
 
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::MoveRight(int num) {
+  for (int i = GetSize() - 1; i >= 0; i--) {
+    SetKeyAt(i + num, KeyAt(i));
+    SetValueAt(i + num, ValueAt(i));
+  }
+  ChangeSizeBy(num);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::MoveLeft(int num) {
+  for (int i = 0; i < GetSize() - num; i++) {
+    SetKeyAt(i, KeyAt(i + num));
+    SetValueAt(i, ValueAt(i + num));
+  }
+  ChangeSizeBy(-num);
+}
+
 // valuetype for internalNode should be page id_t
 template class BPlusTreeInternalPage<GenericKey<4>, page_id_t, GenericComparator<4>>;
 template class BPlusTreeInternalPage<GenericKey<8>, page_id_t, GenericComparator<8>>;

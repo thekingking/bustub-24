@@ -82,6 +82,24 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(int index) {
   ChangeSizeBy(-1);
 }
 
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveRight(int num) {
+  for (int i = GetSize() - 1; i >= 0; --i) {
+    SetKeyAt(i + num, KeyAt(i));
+    SetValueAt(i + num, ValueAt(i));
+  }
+  ChangeSizeBy(num);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveLeft(int num) {
+  for (int i = 0; i < GetSize() - num; ++i) {
+    SetKeyAt(i, KeyAt(i + num));
+    SetValueAt(i, ValueAt(i + num));
+  }
+  ChangeSizeBy(-num);
+}
+
 template class BPlusTreeLeafPage<GenericKey<4>, RID, GenericComparator<4>>;
 template class BPlusTreeLeafPage<GenericKey<8>, RID, GenericComparator<8>>;
 template class BPlusTreeLeafPage<GenericKey<16>, RID, GenericComparator<16>>;

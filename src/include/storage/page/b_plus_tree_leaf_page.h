@@ -69,6 +69,8 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   void SetValueAt(int index, const ValueType &value);
   void Insert(int index, const KeyType &key, const ValueType &value);
   void Remove(int index);
+  void MoveRight(int num);
+  void MoveLeft(int num);
 
   /**
    * @brief For test only return a string representing all keys in

@@ -96,6 +96,10 @@ class BPlusTreeInternalPage : public BPlusTreePage {
 
   void Remove(int index);
 
+  void MoveRight(int num);
+
+  void MoveLeft(int num);
+
   /**
    * @brief For test only, return a string representing all keys in
    * this internal page, formatted as "(key1,key2,key3,...)"
