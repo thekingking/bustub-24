@@ -165,7 +165,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
       header_page = nullptr;
       ctx.header_page_ = std::nullopt;
     }
-    while (internal_page->GetSize() < internal_page->GetMaxSize() && ctx.write_set_.size() > 1) {
+    while (internal_page->GetSize() < internal_page->GetMaxSize() && !ctx.write_set_.empty()) {
       ctx.write_set_.front().Drop();
       ctx.write_set_.pop_front();
     }
